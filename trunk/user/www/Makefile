@@ -9,7 +9,7 @@ include $(ROOTDIR)/user/shared/boards.mk
 PROJECT_HOME_URL="https:\/\/github.com\/walter935581890\/padavan-4.4\/"
 PROJECT_HOME_URL_MOD="https:\/\/github.com\/hanwckf\/rt-n56u\/"
 
-LABEL_COPYRIGHT_TEXT='© 2011-2025 <a href="https:\/\/github.com\/walter935581890\/padavan-4.4" target="blank">Padavan<\/a> \& 往事随风\'
+LABEL_COPYRIGHT_TEXT='© 2011-2025 <a href="https:\/\/github.com\/walter935581890\/padavan-4.4" target="blank">Padavan<\/a> \往事随风\'
 
 BOARD_PATTERN=s/ZVMODELVZ/$(CONFIG_FIRMWARE_PRODUCT_ID)/g
 COPYR_PATTERN=s/ZVCOPYRVZ/$(LABEL_COPYRIGHT_TEXT)/g
