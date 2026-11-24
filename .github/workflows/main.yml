@@ -1,0 +1,202 @@
+# =============================================================================
+# Padavan 4.4 内核 云编译 —— 集成蒲公英(pgyvpn) + 编译时自选插件
+#
+# 用法：Actions → 本 workflow → Run workflow
+#   型号(target1)：下拉选择，取自源码 configs/templates/
+#   插件(plugins)：逗号分隔，留空 = 一个都不带（固件最小）；填 all = 名单内全开
+#                  可用名字：adbyby adguardhome smartdns shadowsocks ssobfs v2ray xray trojan ssserver zerotier wireguard aliddns ddnsto aldriver sqm frpc frps openvpn ttyd transmission aria2 minidlna htop nano mtr tcpdump iperf3 socat vlmcsd srelay openssh sftp ntfs3g
+#   蒲公英(enable_pgyvpn)：默认打开；关掉就出纯净固件
+#
+# 体积提示：xray/v2ray/adguardhome/transmission/aria2 比较占空间，
+#           Flash 只有 16M 的机器别全勾，超大小会刷不进去。
+# =============================================================================
+name: walter-padavan-pgyvpn-4.4
+
+on:
+  workflow_dispatch:
+    inputs:
+      target1:
+        type: choice
+        description: '选择要编译的型号（对应 configs/templates 里的名字）'
+        options:
+        - 'B70'
+        - 'BELL-A040WQ'
+        - 'CR660x'
+        - 'DIR-878'
+        - 'DIR-882'
+        - 'JCG-836PRO'
+        - 'JCG-AC860M'
+        - 'JCG-Q20'
+        - 'JCG-Y2'
+        - 'JDCLOUD-RE-CP-02'
+        - 'JDCLOUD-RE-SP-01B'
+        - 'K2P'
+        - 'K2P-USB'
+        - 'K2P_nano'
+        - 'MI-4'
+        - 'MI-R3G'
+        - 'MI-R3P'
+        - 'MI-R3P-PB'
+        - 'MR2600'
+        - 'MSG1500'
+        - 'NETGEAR-BZV'
+        - 'NEWIFI'
+        - 'R2100'
+        - 'RM2100'
+        - 'RT-AC85P'
+        - 'WR1200JS'
+        - 'XY-C1'
+        - 'ZTE-E8820S'
+        default: 'B70'
+      plugins:
+        type: string
+        description: '要集成的插件，逗号分隔，留空=不集成；可用见文件顶部注释'
+        default: 'adbyby,ddnsto,zerotier,wireguard'
+      enable_pgyvpn:
+        type: boolean
+        description: '集成蒲公英(pgyvpn)插件'
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        # runner 自带 microsoft-prod / azure-cli 源早已 404，会让 apt-get update 返回 100
+        sudo rm -f /etc/apt/sources.list.d/azure-cli.list \
+                   /etc/apt/sources.list.d/microsoft-prod.list \
+                   /etc/apt/sources.list.d/packages.microsoft.com.list
+        sudo apt-get update -o Acquire::Retries=3 || echo "::warning::apt-get update 失败，继续"
+        sudo apt-get -y install unzip libtool-bin curl cmake gperf gawk flex bison nano xxd fakeroot \
+          cpio git python-docutils gettext automake autopoint texinfo build-essential help2man \
+          pkg-config zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget \
+          || echo "::warning::apt 安装不完整，继续（下面的自检会说明缺什么）"
+        sudo apt-get -y install gettext gettext-base || true
+        echo "---- 必备工具自检 ----"
+        for c in make gcc g++ cpio python3 git curl tar awk sed xz msgfmt autopoint libtoolize ; do
+          printf '%-10s %s\n' "$c" "$(command -v $c || echo MISSING)"
+        done
+        command -v fakeroot >/dev/null || sudo apt-get -y install fakeroot || true
+
+    - name: Clone source code
+      run: |
+         /opt/rt-n56u
+        cd /opt/rt-n56u/toolchain-mipsel
+        sh dl_toolchain.sh
+        mkdir -p /opt/images/
+
+    - name: Inject pgyvpn (蒲公英)
+      run: |
+        tar -xzf "$GITHUB_WORKSPACE/pgyvpn-ci.tar.gz" -C /tmp
+        sh /tmp/pgyvpn_ci/apply.sh /opt/rt-n56u
+        echo "==== 注入结果核对 ===="
+        grep -n "CONFIG_FIRMWARE_INCLUDE_PGYVPN" /opt/rt-n56u/trunk/user/Makefile
+        grep -c "蒲公英" /opt/rt-n56u/trunk/user/www/n56u_ribbon_fixed/state.js || true
+        du -sh /opt/rt-n56u/trunk/user/pgyvpn
+        echo "==== xz 工具链准备：3.4 源码树没带 configure，从 4.4 同版本(5.2.4)取整目录 ===="
+        XZD=/opt/rt-n56u/trunk/tools/mksquashfs_xz
+        if [ ! -f "$XZD/xz-5.2.4/configure" ] ; then
+          rm -rf /tmp/p44xz
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/walter935581890/padavan-4.4.git /tmp/p44xz
+          ( cd /tmp/p44xz && git sparse-checkout set trunk/tools/mksquashfs_xz/xz-5.2.4 )
+          rm -rf "$XZD/xz-5.2.4"
+          cp -a /tmp/p44xz/trunk/tools/mksquashfs_xz/xz-5.2.4 "$XZD/"
+          rm -rf /tmp/p44xz
+          echo "已把 xz-5.2.4 换成 4.4 的成品源码目录"
+        fi
+        [ -f "$XZD/xz-5.2.4/configure" ] || (echo "::error::xz 的 configure 仍然缺失"; exit 1)
+        echo "==== 修 xz：跳过 autogen、用 /bin/sh 调 configure、关掉 NLS ===="
+        MK=$XZD/Makefile
+        sed -i 's|\./autogen\.sh ;|: ;|' $MK
+        sed -i 's|\./configure \\|/bin/sh ./configure \\|' $MK
+        grep -q -- '--disable-nls' $MK || sed -i 's|--disable-lzmainfo|--disable-lzmainfo --disable-nls|' $MK
+        rm -f /opt/rt-n56u/trunk/tools/mksquashfs_xz/config_xz_done
+        grep -n -E 'autogen|bin/sh ./configure|disable-nls' $MK
+
+    - name: Build Firmware
+      env:
+        TNAME: ${{ inputs.target1 }}
+        PLUGINS: ${{ inputs.plugins }}
+        PGYVPN_ENABLE: ${{ inputs.enable_pgyvpn }}
+      run: |
+        cd /opt/rt-n56u/trunk
+        TB=configs/templates/$TNAME.config
+        if [ ! -f "$TB" ] ; then
+          echo "::error::型号模板不存在：$TB"
+          exit 1
+        fi
+        cp -f "$TB" .config
+
+        AVAIL="adbyby adguardhome smartdns shadowsocks ssobfs v2ray xray trojan ssserver zerotier wireguard aliddns ddnsto aldriver sqm frpc frps openvpn ttyd transmission aria2 minidlna htop nano mtr tcpdump iperf3 socat vlmcsd srelay openssh sftp ntfs3g"
+        key() {
+          case "$1" in
+            aria2)   echo ARIA ;;
+            ntfs3g)  echo NTFS_3G ;;
+            *)       echo "$1" | tr 'a-z' 'A-Z' ;;
+          esac
+        }
+
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/g' .config
+        if [ "$PLUGINS" = "all" ] ; then
+          PLUGINS="$AVAIL"
+          echo "plugins=all，名单内插件全开"
+        fi
+
+        echo "==== 1. 把名单内所有插件先关掉（模板里默认开着的会被覆盖） ===="
+        for p in $AVAIL ; do
+          k=$(key $p)
+          sed -i "/^CONFIG_FIRMWARE_INCLUDE_${k}=/d" .config
+          echo "CONFIG_FIRMWARE_INCLUDE_${k}=n" >> .config
+        done
+        sed -i "/^CONFIG_FIRMWARE_INCLUDE_PGYVPN=/d" .config
+        echo "CONFIG_FIRMWARE_INCLUDE_PGYVPN=n" >> .config
+
+        echo "==== 2. 打开本次勾选的插件 ===="
+        for p in $(echo "$PLUGINS" | tr ',' ' ') ; do
+          [ -z "$p" ] && continue
+          case " $AVAIL " in
+            *" $p "*) ;;
+            *) echo "::error::插件名不正确：$p"; echo "可用插件：$AVAIL"; exit 1 ;;
+          esac
+          k=$(key $p)
+          sed -i "/^CONFIG_FIRMWARE_INCLUDE_${k}=/d" .config
+          echo "CONFIG_FIRMWARE_INCLUDE_${k}=y" >> .config
+          echo "  + $p ($k)"
+        done
+
+        if [ "$PGYVPN_ENABLE" = "true" ] ; then
+          sed -i "/^CONFIG_FIRMWARE_INCLUDE_PGYVPN=/d" .config
+          echo "CONFIG_FIRMWARE_INCLUDE_PGYVPN=y" >> .config
+          echo "  + pgyvpn (蒲公英)"
+        else
+          echo "  - pgyvpn 已关闭，出纯净固件"
+        fi
+
+        echo "==== 3. 本次 .config 里打开的插件 ===="
+        grep -E "^CONFIG_FIRMWARE_INCLUDE_[A-Za-z0-9_]+=y" .config | sort || true
+
+        sudo ./clear_tree
+        sudo ./build_firmware_modify $TNAME 0
+        sudo mv -f images/*.trx /opt/images/ || true
+        ls -l /opt/images
+        for f in /opt/images/*.trx ; do
+          sz=$(stat -c %s "$f")
+          mb=$(awk -v s="$sz" 'BEGIN{printf "%.2f", s/1048576}')
+          echo "::notice file=$f::$(basename $f) = $sz 字节 ($mb MB)"
+        done
+
+    - name: Upload packages
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Padavan-4.4-packages
+        path: |
+          /opt/images
+          /opt/rt-n56u/trunk/build.log
